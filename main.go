@@ -11,7 +11,11 @@ import (
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients/spreadsheets"
 	commonHTTP "github.com/ThreeDotsLabs/go-event-driven/common/http"
 	"github.com/ThreeDotsLabs/go-event-driven/common/log"
+	"github.com/ThreeDotsLabs/watermill"
+	"github.com/ThreeDotsLabs/watermill-redisstream/pkg/redisstream"
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/labstack/echo/v4"
+	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
 
@@ -149,29 +153,105 @@ type Message struct {
 }
 
 func (w Worker) Send(msg ...Message) {
+	publisher, _ := Publisher()
+
 	for _, m := range msg {
-		w.queue <- m
+		publishMessage := message.NewMessage(watermill.NewShortUUID(), []byte(m.TicketId))
+
+		if m.Task == 0 {
+			publisher.Publish("issue-receipt", publishMessage)
+			fmt.Println("publish is successful: issue-receipt")
+		} else if m.Task == 1 {
+			publisher.Publish("append-to-tracker", publishMessage)
+			fmt.Println("publish is successful: append-to-trackers")
+		}
+
 	}
 }
 
 func (w Worker) Run(clients *clients.Clients) {
+	subscriber, _ := Subscriber()
 
+	go SubscribeIssueReceipt(subscriber, clients)
+	go SubscribeAppendToTracker(subscriber, clients)
+}
+
+func SubscribeIssueReceipt(subscriber *redisstream.Subscriber, clients *clients.Clients) {
 	receiptsClient := NewReceiptsClient(clients)
+
+	// subscriber for topic: issue-receipt
+	messages, err := subscriber.Subscribe(context.Background(), "issue-receipt")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("subscribe is successful: issue-receipt")
+
+	for msg := range messages {
+		ticketId := string(msg.Payload)
+		err := receiptsClient.IssueReceipt(context.Background(), ticketId)
+		if err != nil {
+			msg.Nack()
+		}
+		msg.Ack()
+	}
+}
+
+func SubscribeAppendToTracker(subscriber *redisstream.Subscriber, clients *clients.Clients) {
 	spreadsheetsClient := NewSpreadsheetsClient(clients)
 
-	for msg := range w.queue {
-		switch msg.Task {
-		case TaskIssueReceipt:
-			err := receiptsClient.IssueReceipt(context.Background(), msg.TicketId)
-			if err != nil {
-				w.Send(msg)
-			}
-
-		case TaskAppendToTracker:
-			err := spreadsheetsClient.AppendRow(context.Background(), "tickets-to-print", []string{msg.TicketId})
-			if err != nil {
-				w.Send(msg)
-			}
-		}
+	// subscriber for topic: append-to-tracker
+	messages, err := subscriber.Subscribe(context.Background(), "append-to-tracker")
+	if err != nil {
+		panic(err)
 	}
+	fmt.Println("subscribe is successful: append to tracker")
+
+	for msg := range messages {
+		ticketId := string(msg.Payload)
+		err := spreadsheetsClient.AppendRow(context.Background(), "tickets-to-print", []string{ticketId})
+		if err != nil {
+			msg.Nack()
+		}
+		msg.Ack()
+	}
+
+}
+
+func Publisher() (*redisstream.Publisher, error) {
+
+	logger := watermill.NewStdLogger(false, false)
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_ADDR"),
+	})
+
+	publisher, err := redisstream.NewPublisher(redisstream.PublisherConfig{
+		Client: rdb,
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+
+	return publisher, nil
+
+}
+
+func Subscriber() (*redisstream.Subscriber, error) {
+
+	logger := watermill.NewStdLogger(false, false)
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_ADDR"),
+	})
+
+	subscriber, err := redisstream.NewSubscriber(redisstream.SubscriberConfig{
+		Client: rdb,
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+
+	return subscriber, nil
+
 }
