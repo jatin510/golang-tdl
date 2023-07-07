@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients"
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients/receipts"
@@ -16,6 +17,8 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type TicketsConfirmationRequest struct {
@@ -96,17 +99,39 @@ func main() {
 			return spreadsheetsClient.AppendRow(context.Background(), "tickets-to-print", []string{data})
 		})
 
-	go func() {
-		err := router.Run(context.Background())
-		if err != nil {
-			panic(err)
-		}
-	}()
-
 	logrus.Info("Server starting...")
 
-	err = e.Start(":8080")
-	if err != nil && err != http.ErrServerClosed {
+	ctx := context.Background()
+
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+	defer cancel()
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return router.Run(ctx)
+	})
+
+	g.Go(func() error {
+		<-router.Running()
+
+		err := e.Start(":8080")
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+
+		return nil
+	})
+
+	g.Go(func() error {
+		// Shut down the HTTP server
+		<-ctx.Done()
+		return e.Shutdown(ctx)
+	})
+
+	// Will block until all goroutines finish
+	err = g.Wait()
+	if err != nil {
 		panic(err)
 	}
 }

@@ -9,6 +9,7 @@ require (
 	github.com/labstack/echo/v4 v4.10.2
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/sirupsen/logrus v1.9.0
+	golang.org/x/sync v0.3.0
 )
 
 require (
