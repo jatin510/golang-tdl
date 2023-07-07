@@ -81,6 +81,10 @@ func main() {
 		return c.NoContent(http.StatusOK)
 	})
 
+	e.GET("/health", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
 	router.AddNoPublisherHandler(
 		"handler_issue_receipt",
 		"issue-receipt", sub,
