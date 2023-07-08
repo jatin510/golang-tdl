@@ -91,6 +91,14 @@ func main() {
 		panic(err)
 	}
 
+	ticketsToRefundSub, err := redisstream.NewSubscriber(redisstream.SubscriberConfig{
+		Client: rdb,
+		// ConsumerGroup: "append-to-tracker",
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+
 	clients, err := clients.NewClients(os.Getenv("GATEWAY_ADDR"), nil)
 	if err != nil {
 		panic(err)
@@ -115,12 +123,20 @@ func main() {
 				panic(err)
 			}
 
-			payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
-
-			err = pub.Publish("TicketBookingConfirmed", payload)
-			if err != nil {
-				panic(err)
+			if ticket.Status == "confirmed" {
+				payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
+				err = pub.Publish("TicketBookingConfirmed", payload)
+				if err != nil {
+					panic(err)
+				}
+			} else if ticket.Status == "canceled" {
+				payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
+				err = pub.Publish("TicketBookingCanceled", payload)
+				if err != nil {
+					panic(err)
+				}
 			}
+
 		}
 
 		return c.NoContent(http.StatusOK)
@@ -156,6 +172,20 @@ func main() {
 			return spreadsheetsClient.AppendRow(
 				context.Background(),
 				"tickets-to-print",
+				[]string{payload.Id, payload.CustomerEmail, payload.Price.MoneyAmount, payload.Price.MoneyCurrency},
+			)
+		})
+
+	router.AddNoPublisherHandler(
+		"handler_tickets_to_refund",
+		"TicketBookingCanceled",
+		ticketsToRefundSub,
+		func(message *message.Message) error {
+			var payload Ticket
+			json.Unmarshal(message.Payload, &payload)
+			return spreadsheetsClient.AppendRow(
+				context.Background(),
+				"tickets-to-refund",
 				[]string{payload.Id, payload.CustomerEmail, payload.Price.MoneyAmount, payload.Price.MoneyCurrency},
 			)
 		})
