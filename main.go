@@ -13,6 +13,7 @@ import (
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients/receipts"
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients/spreadsheets"
 	commonHTTP "github.com/ThreeDotsLabs/go-event-driven/common/http"
+	"github.com/ThreeDotsLabs/go-event-driven/common/log"
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-redisstream/pkg/redisstream"
 	"github.com/ThreeDotsLabs/watermill/message"
@@ -56,13 +57,24 @@ func NewEventHeader() EventHeader {
 	}
 }
 
+func LoggingMiddleware(next message.HandlerFunc) message.HandlerFunc {
+	return func(msg *message.Message) ([]*message.Message, error) {
+		logger := logrus.WithField("message_uuid", watermill.NewUUID())
+		logger.Info("Handling a message")
+		return next(msg)
+	}
+}
+
 func main() {
-	logger := watermill.NewStdLogger(false, false)
+	log.Init(logrus.InfoLevel)
+	logger := log.NewWatermill(logrus.NewEntry(logrus.StandardLogger()))
 
 	router, err := message.NewRouter(message.RouterConfig{}, logger)
 	if err != nil {
 		panic(err)
 	}
+
+	router.AddMiddleware(LoggingMiddleware)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: os.Getenv("REDIS_ADDR"),
