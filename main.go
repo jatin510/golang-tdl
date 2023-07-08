@@ -84,6 +84,26 @@ func SetCorrelationIdMiddleware(next message.HandlerFunc) message.HandlerFunc {
 	}
 }
 
+func ErrorHandlerMiddleware(next message.HandlerFunc) message.HandlerFunc {
+	return func(msg *message.Message) ([]*message.Message, error) {
+		msgs, err := next(msg)
+
+		if err != nil {
+			// ctx := msg.Context()
+
+			logger := logrus.WithFields(logrus.Fields{
+				"message_uuid": watermill.NewUUID(),
+				"error":        err,
+			})
+
+			logger.Info("Message handling error")
+
+		}
+
+		return msgs, err
+	}
+}
+
 func main() {
 	log.Init(logrus.InfoLevel)
 	logger := log.NewWatermill(logrus.NewEntry(logrus.StandardLogger()))
@@ -232,6 +252,7 @@ func main() {
 			)
 		})
 
+	router.AddMiddleware(ErrorHandlerMiddleware)
 	logrus.Info("Server starting...")
 
 	ctx := context.Background()
