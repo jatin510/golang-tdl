@@ -7,6 +7,7 @@ require (
 	github.com/ThreeDotsLabs/watermill v1.3.1
 	github.com/ThreeDotsLabs/watermill-redisstream v1.1.0
 	github.com/labstack/echo/v4 v4.10.2
+	github.com/lithammer/shortuuid/v3 v3.0.7
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/sirupsen/logrus v1.9.0
 	golang.org/x/sync v0.3.0
@@ -23,7 +24,6 @@ require (
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/labstack/gommon v0.4.0 // indirect
-	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect

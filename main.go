@@ -18,6 +18,7 @@ import (
 	"github.com/ThreeDotsLabs/watermill-redisstream/pkg/redisstream"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/labstack/echo/v4"
+	"github.com/lithammer/shortuuid/v3"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 
@@ -61,6 +62,20 @@ func LoggingMiddleware(next message.HandlerFunc) message.HandlerFunc {
 	return func(msg *message.Message) ([]*message.Message, error) {
 		logger := logrus.WithField("message_uuid", watermill.NewUUID())
 		logger.Info("Handling a message")
+
+		return next(msg)
+	}
+}
+
+func SetCorrelationIdMiddleware(next message.HandlerFunc) message.HandlerFunc {
+	return func(msg *message.Message) ([]*message.Message, error) {
+		correlationID := msg.Metadata.Get("correlation_id")
+		if correlationID == "" {
+			correlationID = shortuuid.New()
+		}
+		ctx := log.ContextWithCorrelationID(msg.Context(), correlationID)
+
+		msg.SetContext(ctx)
 		return next(msg)
 	}
 }
@@ -75,6 +90,7 @@ func main() {
 	}
 
 	router.AddMiddleware(LoggingMiddleware)
+	router.AddMiddleware(SetCorrelationIdMiddleware)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: os.Getenv("REDIS_ADDR"),
@@ -111,7 +127,12 @@ func main() {
 		panic(err)
 	}
 
-	clients, err := clients.NewClients(os.Getenv("GATEWAY_ADDR"), nil)
+	clients, err := clients.NewClients(
+		os.Getenv("GATEWAY_ADDR"),
+		func(ctx context.Context, req *http.Request) error {
+			req.Header.Set("Correlation-ID", log.CorrelationIDFromContext(ctx))
+			return nil
+		})
 	if err != nil {
 		panic(err)
 	}
@@ -130,6 +151,7 @@ func main() {
 
 		for _, ticket := range request.Tickets {
 			ticket.Header = NewEventHeader()
+
 			eventData, err := json.Marshal(ticket)
 			if err != nil {
 				panic(err)
@@ -137,12 +159,16 @@ func main() {
 
 			if ticket.Status == "confirmed" {
 				payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
+				payload.Metadata.Set("correlation_id", c.Request().Header.Get("Correlation-ID"))
+
 				err = pub.Publish("TicketBookingConfirmed", payload)
 				if err != nil {
 					panic(err)
 				}
 			} else if ticket.Status == "canceled" {
 				payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
+				payload.Metadata.Set("correlation_id", c.Request().Header.Get("Correlation-ID"))
+
 				err = pub.Publish("TicketBookingCanceled", payload)
 				if err != nil {
 					panic(err)
@@ -171,7 +197,7 @@ func main() {
 				Price:    eventData.Price,
 			}
 
-			return receiptsClient.IssueReceipt(context.Background(), issueReceiptPayload)
+			return receiptsClient.IssueReceipt(message.Context(), issueReceiptPayload)
 		})
 
 	router.AddNoPublisherHandler(
@@ -182,7 +208,7 @@ func main() {
 			var payload Ticket
 			json.Unmarshal(message.Payload, &payload)
 			return spreadsheetsClient.AppendRow(
-				context.Background(),
+				message.Context(),
 				"tickets-to-print",
 				[]string{payload.Id, payload.CustomerEmail, payload.Price.MoneyAmount, payload.Price.MoneyCurrency},
 			)
@@ -196,7 +222,7 @@ func main() {
 			var payload Ticket
 			json.Unmarshal(message.Payload, &payload)
 			return spreadsheetsClient.AppendRow(
-				context.Background(),
+				message.Context(),
 				"tickets-to-refund",
 				[]string{payload.Id, payload.CustomerEmail, payload.Price.MoneyAmount, payload.Price.MoneyCurrency},
 			)
