@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,8 +22,25 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type TicketsConfirmationRequest struct {
-	Tickets []string `json:"tickets"`
+type Money struct {
+	MoneyAmount   string `json:"amount,omitempty"`
+	MoneyCurrency string `json:"currency,omitempty"`
+}
+
+type Ticket struct {
+	Id            string `json:"ticket_id,omitempty"`
+	Status        string `json:"status,omitempty"`
+	CustomerEmail string `json:"customer_email,omitempty"`
+	Price         Money  `json:"price,omitempty"`
+}
+
+type TicketsStatusRequest struct {
+	Tickets []Ticket `json:"tickets,omitempty"`
+}
+
+type IssueReceiptRequest struct {
+	TicketID string
+	Price    Money
 }
 
 func main() {
@@ -61,20 +79,24 @@ func main() {
 
 	e := commonHTTP.NewEcho()
 
-	e.POST("/tickets-confirmation", func(c echo.Context) error {
-		var request TicketsConfirmationRequest
+	e.POST("/tickets-status", func(c echo.Context) error {
+		var request TicketsStatusRequest
 		err := c.Bind(&request)
 		if err != nil {
 			return err
 		}
 
 		for _, ticket := range request.Tickets {
+			fmt.Println("ticket data", ticket)
+			eventData, err := json.Marshal(ticket)
+			if err != nil {
+				panic(err)
+			}
 
-			receiptMessage := message.NewMessage(watermill.NewShortUUID(), []byte(ticket))
-			appendToTrackerMessage := message.NewMessage(watermill.NewShortUUID(), []byte(ticket))
+			payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
 
-			pub.Publish("issue-receipt", receiptMessage)
-			pub.Publish("append-to-tracker", appendToTrackerMessage)
+			pub.Publish("issue-receipt", payload)
+			pub.Publish("append-to-tracker", payload)
 
 		}
 
@@ -89,18 +111,28 @@ func main() {
 		"handler_issue_receipt",
 		"issue-receipt", sub,
 		func(message *message.Message) error {
-			data := string(message.Payload)
-			fmt.Println("issue-receipt", data)
-			return receiptsClient.IssueReceipt(context.Background(), data)
+			var eventData Ticket
+			json.Unmarshal(message.Payload, &eventData)
+
+			issueReceiptPayload := IssueReceiptRequest{
+				TicketID: eventData.Id,
+				Price:    eventData.Price,
+			}
+
+			return receiptsClient.IssueReceipt(context.Background(), issueReceiptPayload)
 		})
 
 	router.AddNoPublisherHandler(
 		"handler_append_to_tracker",
 		"append-to-tracker", sub,
 		func(message *message.Message) error {
-			data := string(message.Payload)
-			fmt.Println("append-to-tracker", data)
-			return spreadsheetsClient.AppendRow(context.Background(), "tickets-to-print", []string{data})
+			var payload Ticket
+			json.Unmarshal(message.Payload, &payload)
+			return spreadsheetsClient.AppendRow(
+				context.Background(),
+				"tickets-to-print",
+				[]string{payload.Id, payload.CustomerEmail, payload.Price.MoneyAmount, payload.Price.MoneyCurrency},
+			)
 		})
 
 	logrus.Info("Server starting...")
@@ -150,9 +182,10 @@ func NewReceiptsClient(clients *clients.Clients) ReceiptsClient {
 	}
 }
 
-func (c ReceiptsClient) IssueReceipt(ctx context.Context, ticketID string) error {
+func (c ReceiptsClient) IssueReceipt(ctx context.Context, request IssueReceiptRequest) error {
 	body := receipts.PutReceiptsJSONRequestBody{
-		TicketId: ticketID,
+		TicketId: request.TicketID,
+		Price:    receipts.Money(request.Price),
 	}
 
 	receiptsResp, err := c.clients.Receipts.PutReceiptsWithResponse(ctx, body)

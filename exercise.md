@@ -1,43 +1,42 @@
-# Project: Health checks
+# Project: Migrate to Events
 
-You can now control how a service shuts down. Another good practice is being able to tell when it's up and ready to serve requests.
+In the current form, our webhook handler knows much of what happens outside it.
+It publishes a message for each action that needs to happen (issuing a receipt or appending the ticket to the tracker).
+This is not a big deal right now, but handlers like this tend to grow and become hard to change.
 
-The simple, common way to do this is to expose an HTTP endpoint like `/health` that returns a 200 status code when the service is ready.
+We can easily improve this by replacing messages with a proper event.
 
-Here's an example using Echo:
+To recap, here are some things to keep in mind regarding events:
 
-```go
-e.GET("/health", func(c echo.Context) error {
-	return c.String(http.StatusOK, "ok")
-})
-```
-
-The Router exposes a `Running` method that returns a channel that gets closed once the Router is ready.
-You can use it like this:
-
-```go
-<-router.Running()
-```
+- They're facts: They describe something that already happened.
+- They're immutable: Once published, they can't be changed.
+- They should be expressed as verbs in past tense, like `UserSignedUp`, `OrderPlaced`, or `AlarmTriggered`.
 
 ## Exercise
 
 File: `project/main.go`
 
-Implement a health check endpoint in your project.
+Instead of two messages published on the `issue-receipt` and `append-ticket` topics,
+make the handler publish a single `TicketBookingConfirmed` event on the `TicketBookingConfirmed` topic.
 
-The service should expose an HTTP `GET /health` endpoint that returns a 200 status code and an "ok" message.
+The event should have the following form:
 
-Extend the code running your HTTP server so it waits for the Router to be ready.
-
-```go
-g.Go(func() error {
-	<-router.Running()
-	
-	err := e.Start(":8080")
-	if err != nil && err != http.ErrServerClosed {
-		return err
-	}
-	
-	return nil
-})
+```json
+{
+  "header": {
+    "id": "...",
+    "published_at": "..."
+  },
+  "ticket_id": "...",
+  "customer_email": "...",
+  "price": {
+    "amount": 100,
+    "currency": "EUR"
+  }
+}
 ```
+
+Change the Router handlers to subscribe to the `TicketBookingConfirmed` topic.
+
+Keep two subscribers, as you need two separate consumer groups.
+Otherwise, only one handler would receive each event.
