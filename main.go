@@ -60,7 +60,9 @@ func NewEventHeader() EventHeader {
 
 func LoggingMiddleware(next message.HandlerFunc) message.HandlerFunc {
 	return func(msg *message.Message) ([]*message.Message, error) {
-		logger := logrus.WithField("message_uuid", watermill.NewUUID())
+		logger := log.FromContext(msg.Context())
+		logger = logger.WithField("message_uuid", watermill.NewUUID())
+
 		logger.Info("Handling a message")
 
 		return next(msg)
@@ -69,12 +71,14 @@ func LoggingMiddleware(next message.HandlerFunc) message.HandlerFunc {
 
 func SetCorrelationIdMiddleware(next message.HandlerFunc) message.HandlerFunc {
 	return func(msg *message.Message) ([]*message.Message, error) {
+		ctx := msg.Context()
+
 		correlationID := msg.Metadata.Get("correlation_id")
 		if correlationID == "" {
 			correlationID = shortuuid.New()
 		}
-		ctx := log.ContextWithCorrelationID(msg.Context(), correlationID)
-
+		ctx = log.ToContext(ctx, logrus.WithFields(logrus.Fields{"correlation_id": correlationID}))
+		ctx = log.ContextWithCorrelationID(ctx, correlationID)
 		msg.SetContext(ctx)
 		return next(msg)
 	}
@@ -89,8 +93,8 @@ func main() {
 		panic(err)
 	}
 
-	router.AddMiddleware(LoggingMiddleware)
 	router.AddMiddleware(SetCorrelationIdMiddleware)
+	router.AddMiddleware(LoggingMiddleware)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: os.Getenv("REDIS_ADDR"),
