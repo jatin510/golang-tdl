@@ -1,42 +1,48 @@
-# Project: Migrate to Events
+# Project: Handle Cancellations 
 
-In the current form, our webhook handler knows much of what happens outside it.
-It publishes a message for each action that needs to happen (issuing a receipt or appending the ticket to the tracker).
-This is not a big deal right now, but handlers like this tend to grow and become hard to change.
 
-We can easily improve this by replacing messages with a proper event.
+<div class="alert alert-dismissible bg-info text-white d-flex flex-column flex-sm-row p-7 mb-10">
+    <div class="d-flex flex-column">
+        <h3 class="mb-5 text-white">
+			Background	
+		</h3>
+        <span>
 
-To recap, here are some things to keep in mind regarding events:
+With more tickets to handle, refunds also become more frequent.
+Because our webhook is asynchronous, it's possible that a ticket gets canceled
+right after the purchase because someone else bought it first.
+Right now, our operations team handles these cases manually; it's time we help them out a bit.
 
-- They're facts: They describe something that already happened.
-- They're immutable: Once published, they can't be changed.
-- They should be expressed as verbs in past tense, like `UserSignedUp`, `OrderPlaced`, or `AlarmTriggered`.
+</span>
+	</div>
+	</div>
 
 ## Exercise
 
 File: `project/main.go`
 
-Instead of two messages published on the `issue-receipt` and `append-ticket` topics,
-make the handler publish a single `TicketBookingConfirmed` event on the `TicketBookingConfirmed` topic.
+The new API includes a `status` field for each ticket.
 
-The event should have the following form:
+We should differentiate between `confirmed` and `canceled` tickets. 
 
-```json
-{
-  "header": {
-    "id": "...",
-    "published_at": "..."
-  },
-  "ticket_id": "...",
-  "customer_email": "...",
-  "price": {
-    "amount": 100,
-    "currency": "EUR"
-  }
+For each `confirmed` ticket, keep the current behavior: publishing the `TicketBookingConfirmed` event.
+
+For each `canceled` ticket, publish a new event instead: `TicketBookingCanceled`.
+
+```go
+type TicketBookingCanceled struct {
+	Header        EventHeader `json:"header"`
+	TicketID      string      `json:"ticket_id"`
+	CustomerEmail string      `json:"customer_email"`
+	Price         Money       `json:"price"`
 }
 ```
 
-Change the Router handlers to subscribe to the `TicketBookingConfirmed` topic.
+Add a new handler for this event. Remember to use a new subscriber with a unique consumer group.
 
-Keep two subscribers, as you need two separate consumer groups.
-Otherwise, only one handler would receive each event.
+The new handler should append a row to the `tickets-to-refund` spreadsheet with the following columns:
+
+- Ticket ID
+- Customer Email
+- Price Amount
+- Price Currency

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients"
 	"github.com/ThreeDotsLabs/go-event-driven/common/clients/receipts"
@@ -28,10 +29,11 @@ type Money struct {
 }
 
 type Ticket struct {
-	Id            string `json:"ticket_id,omitempty"`
-	Status        string `json:"status,omitempty"`
-	CustomerEmail string `json:"customer_email,omitempty"`
-	Price         Money  `json:"price,omitempty"`
+	Header        EventHeader `json:"header,omitempty"`
+	Id            string      `json:"ticket_id,omitempty"`
+	Status        string      `json:"status,omitempty"`
+	CustomerEmail string      `json:"customer_email,omitempty"`
+	Price         Money       `json:"price,omitempty"`
 }
 
 type TicketsStatusRequest struct {
@@ -41,6 +43,17 @@ type TicketsStatusRequest struct {
 type IssueReceiptRequest struct {
 	TicketID string
 	Price    Money
+}
+type EventHeader struct {
+	Id          string    `json:"id,omitempty"`
+	PublishedAt time.Time `json:"published_at,omitempty"`
+}
+
+func NewEventHeader() EventHeader {
+	return EventHeader{
+		Id:          watermill.NewShortUUID(),
+		PublishedAt: time.Now().UTC(),
+	}
 }
 
 func main() {
@@ -62,8 +75,17 @@ func main() {
 		panic(err)
 	}
 
-	sub, err := redisstream.NewSubscriber(redisstream.SubscriberConfig{
-		Client: rdb,
+	issueReceiptSub, err := redisstream.NewSubscriber(redisstream.SubscriberConfig{
+		Client:        rdb,
+		ConsumerGroup: "issue-receipt",
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+
+	appendToTrackerSub, err := redisstream.NewSubscriber(redisstream.SubscriberConfig{
+		Client:        rdb,
+		ConsumerGroup: "append-to-tracker",
 	}, logger)
 	if err != nil {
 		panic(err)
@@ -87,7 +109,7 @@ func main() {
 		}
 
 		for _, ticket := range request.Tickets {
-			fmt.Println("ticket data", ticket)
+			ticket.Header = NewEventHeader()
 			eventData, err := json.Marshal(ticket)
 			if err != nil {
 				panic(err)
@@ -95,9 +117,10 @@ func main() {
 
 			payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
 
-			pub.Publish("issue-receipt", payload)
-			pub.Publish("append-to-tracker", payload)
-
+			err = pub.Publish("TicketBookingConfirmed", payload)
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		return c.NoContent(http.StatusOK)
@@ -109,7 +132,8 @@ func main() {
 
 	router.AddNoPublisherHandler(
 		"handler_issue_receipt",
-		"issue-receipt", sub,
+		"TicketBookingConfirmed",
+		issueReceiptSub,
 		func(message *message.Message) error {
 			var eventData Ticket
 			json.Unmarshal(message.Payload, &eventData)
@@ -124,7 +148,8 @@ func main() {
 
 	router.AddNoPublisherHandler(
 		"handler_append_to_tracker",
-		"append-to-tracker", sub,
+		"TicketBookingConfirmed",
+		appendToTrackerSub,
 		func(message *message.Message) error {
 			var payload Ticket
 			json.Unmarshal(message.Payload, &payload)
