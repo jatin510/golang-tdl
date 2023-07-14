@@ -1,85 +1,53 @@
-# Error logging
+# Temporary errors
 
-In the next several exercises, we'll look at a few ways to handle errors in handlers.
+While processing a message, a handler can return an error.
+This is normal and expected. There are a few types of errors that can happen,
+and to build a solid system, you need to handle them properly.
 
-Middleware functions are a great place to keep the error-handling logic. 
-There are two ways you can capture errors in middleware.
+When a handler returns an error, Watermill's Router will send a "negative acknowledge" (*nack*)
+to the Pub/Sub. Most of the time, this puts the message back on the queue to be delivered again.
 
-The first one is to store the return values in variables and return them.
+Unless your handlers are trivial, they will need to reach out
+over the network or to the file system, and these operations can fail.
+These errors are usually temporary; for example, the database might be down for a while,
+but when it comes back up, you can try again.
 
-```go
-func HandleErrors(next message.HandlerFunc) message.HandlerFunc {
-	return func(msg *message.Message) ([]*message.Message, error) {
-		msgs, err := next(msg)
-		
-		if err != nil {
-			// Handle the error 
-		}
-		
-		return msgs, err
-	}
-}
-```
+The preferred way of dealing with temporary errors is simply retrying.
+The message is delivered again and again until it succeeds.
 
-The second one is to use `defer` and named returns. This is a different flavor of the same thing.
+This approach seems trivial, but it's quite powerful. It allows you to not worry about
+temporary issues. The system auto-heals without human intervention.
 
-```go
-func HandleErrors(next message.HandlerFunc) message.HandlerFunc {
-	return func(msg *message.Message) (msgs []*message.Message, err error) {
-		defer func() {
-			if err != nil { 
-				// Handle the error
-			}
-		}()
+It's up to the Pub/Sub to decide how to handle the *nack*.
+A common approach is to immediately redeliver the message.
+The downside of this approach is that it can cause a big load spike to impact your service.
+If the database is down for a few minutes, it makes no sense to retry every few milliseconds.
 
-		return next(msg)
-	}
-}
-```
-
-Note that regardless of when in the sequence the middleware is added,
-the error handling will be done at the end, after the handler and all other middleware functions are executed.
-Previously, we used middleware that executed before the handler.
-This pattern is a way to run some code after it.
+Some Pub/Subs can be configured to delay the redelivery, for example, by a few seconds. 
+This is an improvement, as it spreads the load over time.
+However, in this scenario, the Pub/Sub continues to deliver other messages.
+It means the *nacked* message will be delivered out of order. This can be a problem or not,
+depending on the use case and how your handlers work.
 
 ## Exercise
 
 File: `project/main.go`
 
-Extend the logging middleware to also log errors.
-
-The log message should be:
-
-```
-Message handling error
-```
-
-It should include two log fields: `error` with the error and `message_uuid` with the message UUID.
-
-
-<div class="alert alert-dismissible bg-light-primary d-flex flex-column flex-sm-row p-7 mb-10">
-    <div class="d-flex flex-column">
-        <h3 class="mb-5 text-dark">
-			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-lightbulb text-primary" viewBox="0 0 16 16">
-			  <path d="M2 6a6 6 0 1 1 10.174 4.31c-.203.196-.359.4-.453.619l-.762 1.769A.5.5 0 0 1 10.5 13a.5.5 0 0 1 0 1 .5.5 0 0 1 0 1l-.224.447a1 1 0 0 1-.894.553H6.618a1 1 0 0 1-.894-.553L5.5 15a.5.5 0 0 1 0-1 .5.5 0 0 1 0-1 .5.5 0 0 1-.46-.302l-.761-1.77a1.964 1.964 0 0 0-.453-.618A5.984 5.984 0 0 1 2 6zm6-5a5 5 0 0 0-3.479 8.592c.263.254.514.564.676.941L5.83 12h4.342l.632-1.467c.162-.377.413-.687.676-.941A5 5 0 0 0 8 1z"/>
-			</svg>
-			Tip
-		</h3>
-        <span>
-
-There are two ways you can add multiple keys in logrus:
+Watermill provides middleware that can be used to retry messages.
+It reacts to errors, and before sending a *nack*, it tries to process the message again.
 
 ```go
-logger.WithField("key1", value1).WithField("key2", value2).Info("Log message")
+middleware.Retry{
+	MaxRetries:      10, 
+	InitialInterval: time.Millisecond * 100, 
+	MaxInterval:     time.Second, 
+	Multiplier:      2, 
+	Logger:          watermillLogger,
+}
 ```
 
-```go
-logger.WithFields(logrus.Fields{
-	"key1": value1, 
-	"key2": value2,
-}).Info("Log message")
-```
+You can configure it for exponential backoff, so the delay between retries increases after each error.
 
-</span>
-	</div>
-	</div>
+Add a retry middleware function to your project, so the messages get processed even if the Receipts API is down for some time.
+
+Use exponential backoff: If you spam the API, the service might have issues coming online.
