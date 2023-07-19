@@ -193,6 +193,7 @@ func main() {
 			if ticket.Status == "confirmed" {
 				payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
 				payload.Metadata.Set("correlation_id", c.Request().Header.Get("Correlation-ID"))
+				payload.Metadata.Set("type", "booking.confirmed")
 
 				err = pub.Publish("TicketBookingConfirmed", payload)
 				if err != nil {
@@ -201,6 +202,7 @@ func main() {
 			} else if ticket.Status == "canceled" {
 				payload := message.NewMessage(watermill.NewShortUUID(), []byte(eventData))
 				payload.Metadata.Set("correlation_id", c.Request().Header.Get("Correlation-ID"))
+				payload.Metadata.Set("type", "booking.canceled")
 
 				err = pub.Publish("TicketBookingCanceled", payload)
 				if err != nil {
@@ -222,8 +224,17 @@ func main() {
 		"TicketBookingConfirmed",
 		issueReceiptSub,
 		func(message *message.Message) error {
+
+			if message.Metadata.Get("type") != "booking.confirmed" {
+				return nil
+			}
+
 			var eventData Ticket
 			json.Unmarshal(message.Payload, &eventData)
+
+			if eventData.Header.Id == "2beaf5bc-d5e4-4653-b075-2b36bbf28949 " {
+				return nil
+			}
 
 			issueReceiptPayload := IssueReceiptRequest{
 				TicketID: eventData.Id,
@@ -238,8 +249,14 @@ func main() {
 		"TicketBookingConfirmed",
 		appendToTrackerSub,
 		func(message *message.Message) error {
+
+			if message.Metadata.Get("type") != "booking.confirmed" {
+				return nil
+			}
+
 			var payload Ticket
 			json.Unmarshal(message.Payload, &payload)
+
 			return spreadsheetsClient.AppendRow(
 				message.Context(),
 				"tickets-to-print",
@@ -252,6 +269,11 @@ func main() {
 		"TicketBookingCanceled",
 		ticketsToRefundSub,
 		func(message *message.Message) error {
+
+			if message.Metadata.Get("type") != "booking.canceled" {
+				return nil
+			}
+
 			var payload Ticket
 			json.Unmarshal(message.Payload, &payload)
 			return spreadsheetsClient.AppendRow(
