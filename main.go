@@ -236,6 +236,10 @@ func main() {
 				return nil
 			}
 
+			if eventData.Price.MoneyCurrency == "" {
+				eventData.Price.MoneyCurrency = "USD"
+			}
+
 			issueReceiptPayload := IssueReceiptRequest{
 				TicketID: eventData.Id,
 				Price:    eventData.Price,
@@ -256,6 +260,10 @@ func main() {
 
 			var payload Ticket
 			json.Unmarshal(message.Payload, &payload)
+
+			if payload.Price.MoneyCurrency == "" {
+				payload.Price.MoneyCurrency = "USD"
+			}
 
 			return spreadsheetsClient.AppendRow(
 				message.Context(),
