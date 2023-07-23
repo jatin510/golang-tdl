@@ -14,9 +14,9 @@ type ReceiptsClientService struct {
 	clients *clients.Clients
 }
 
-func NewReceiptsClientService(clients *clients.Clients) *ReceiptsClientService {
+func NewReceiptsServiceClient(clients *clients.Clients) *ReceiptsClientService {
 	if clients == nil {
-		panic("NewReceiptsClientService: clients is nil")
+		panic("NewReceiptsServiceClient: clients is nil")
 	}
 
 	return &ReceiptsClientService{
